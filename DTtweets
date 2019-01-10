@@ -1,0 +1,218 @@
+# References:
+#https://deltadna.com/blog/text-mining-in-r-for-term-frequency/
+#https://www.analyticsvidhya.com/blog/2017/03/measuring-audience-sentiments-about-movies-using-twitter-and-text-analytics/
+#https://rpubs.com/sgeletta/95577, https://www.kaggle.com/rtatman/tutorial-sentiment-analysis-in-r
+
+#Authors: Louis Kattie
+#Purpose: To analyze the sentiment around the President's tweets and how it affects businesses, the stock market and global economy.
+
+#******INSTALLINNG PACKAGES********
+install.packages("tm",dependencies = TRUE)
+install.packages("SnowballC",dependencies = TRUE)
+install.packages("ggplot2",dependencies = TRUE)
+install.packages("wordcloud",dependencies = TRUE)
+install.packages("stringr",dependencies = TRUE)
+install.packages("tidytext",dependencies = TRUE)
+install.packages("dplyr",dependencies = TRUE)
+install.packages("lubridate",dependencies = TRUE)
+install.packages("syuzhet",dependencies = TRUE)
+
+#from CRAN
+install.packages("twitteR")
+#alternatively from the Github
+library(devtools)
+#install_github(geoffjentry/twitteR)
+install.packages("rtweet")
+library(rtweet)
+library(purrr)
+library(dplyr)
+#load library
+library(twitteR)
+#loading libraries
+library('stringr')
+library('wordcloud')
+library('tm')
+library('SnowballC')
+library('tidytext')
+library('lubridate')
+library('tidyr')
+library('syuzhet')
+library('NLP')
+library('ggplot2')
+
+#Importing file with all content 
+tweets<-read.csv(file="tweets45.csv", stringsAsFactors = FALSE, strip.white = TRUE)
+str(tweets)
+
+##declare functions + variables##
+#  function to remove anything other than English letters or space, or "'" 
+removeNumPunct <- function(x) gsub("[^[:alpha:][:space:]_]'*", "", x) 
+# remove stopwords 
+myStopwords <- myStopwords <- c(stopwords('english'), "amp","kne")
+
+##  PREPROCESSING###
+##format created variable in date time format
+tweets$created <- mdy_hm(tweets$created,quiet = FALSE, tz ="UTC", locale = Sys.getlocale("LC_TIME"),truncated = 0)
+#keep only first 6 columns, 
+tweets45<-tweets[,  c(2,4,6,13)]
+#create column with just date and convert it to date object
+tweets45 <- tweets45 %>%
+  mutate(date=substr(created, 1, 10))
+tweets45$date <- ymd(tweets45$date,quiet = FALSE, tz = NULL, locale = Sys.getlocale("LC_TIME"),truncated = 0)
+
+View(tweets45)
+str(tweets45)
+tweets45$Tweet_Text <- tweets45$text
+
+#let's remove html links
+tweets45$Tweet_Text<-gsub("http[^[:blank:]]+","",tweets45$Tweet_Text, ignore.case =TRUE)
+
+#remove anything thats not a number letter or #, ; or '
+tweets45$Tweet_Text <- gsub("[^0-9a-zA-Z#';\\s]"," ",tweets45$Tweet_Text)
+tweets45$Tweet_Text <- gsub("[\\+\"*]","",tweets45$Tweet_Text)
+
+#replace variations of following names
+tweets45$Tweet_Text <- gsub(".(president|barack)* obama"," barackobama",tweets45$Tweet_Text,ignore.case =TRUE) #this works
+tweets45$Tweet_Text <- gsub("dem+(s|ocr)+([:space:]|[^(ats)]|[^(acy)])+","democrats",tweets45$Tweet_Text,ignore.case =TRUE)
+tweets45$Tweet_Text <- gsub("(robert)* mueller"," robertmueller",tweets45$Tweet_Text,ignore.case =TRUE)
+tweets45$Tweet_Text <- gsub("(james)* comey"," jamescomey",tweets45$Tweet_Text,ignore.case =TRUE)
+tweets45$Tweet_Text <- gsub("(washington) post"," washingtonpost",tweets45$Tweet_Text,ignore.case =TRUE)
+tweets45$Tweet_Text <- gsub("fake news"," fakenews",tweets45$Tweet_Text,ignore.case =TRUE)
+tweets45$Tweet_Text <- gsub("witch hunt"," witchhunt",tweets45$Tweet_Text,ignore.case =TRUE)
+tweets45$Tweet_Text <- gsub("(donald|president Trump)"," trump",tweets45$Tweet_Text,ignore.case =TRUE)
+#removal of extra space
+tweets45$Tweet_Text<- gsub("\\s+"," ",tweets45$Tweet_Text)
+#removal of space at the end of text
+tweets45$Tweet_Text <- gsub("\\s*$","",tweets45$Tweet_Text)
+
+#Verification  
+print(tweets45$Tweet_Text[10:46])
+#print(tweets45$Tweet_Text[46:76])
+
+
+##EXPLORATORY 
+#statistics
+summary(tweets45)
+#Explore hashtags
+all_words <- unlist(strsplit(tweets45$Tweet_Text," "))
+all_hashtag <- regexpr("^#[[:alnum:]_]*",all_words)
+list_hashtags <- regmatches(all_words,all_hashtag)
+print(length(list_hashtags))
+nb_hashtags <- sort(table(list_hashtags),decreasing=TRUE)
+print(nb_hashtags)
+
+myCorpus <- Corpus(VectorSource(tweets45$Tweet_Text)) 
+# convert to lower case 
+myCorpus <- tm_map(myCorpus, content_transformer(str_to_lower))
+myCorpus <- tm_map(myCorpus, content_transformer(removeNumPunct)) 
+myCorpus <- tm_map(myCorpus, removeWords, myStopwords) 
+# remove extra whitespace 
+myCorpus <- tm_map(myCorpus, stripWhitespace)
+# inspect 
+inspect(myCorpus[1:20])
+
+# term document matrix 
+tdm <- TermDocumentMatrix(myCorpus, control = list(wordLengths = c(3, 20))) #can change word length min=3 max=15 
+tdm
+
+#remove less frequent words
+tdms <- removeSparseTerms(tdm, 0.99)
+tdms
+#convert to matrix of frequently used terms/words and sort decending, this is for reuse
+terms<-sort(rowSums(as.matrix(tdms)),decreasing=TRUE)
+terms[1:20] #frequent terms sorted
+
+idx <- which(dimnames(tdms)$Terms %in% c("democrats", "border")) 
+as.matrix(tdms[idx, 1:440]) #can change the start and end tweets to see different results
+
+
+#GGplot 50 highest freq terms
+term.freq <-terms[1:50] 
+df <- data.frame(term = names(term.freq), freq = term.freq)
+ggplot(df, aes(x=term, y=freq)) + geom_bar(stat = "identity", fill="lightBlue") + xlab("Terms") + ylab("Count") + coord_flip() + theme(axis.text=element_text(size=7))
+
+#wordcloud
+# calculate the frequency of words and sort it by frequency 
+word.freq<-term.freq 
+
+library(RColorBrewer)
+pal <- brewer.pal(9, "BuGn")[-(1:3)]# colors
+# plot word cloud 
+wordcloud(words = names(word.freq), freq = word.freq, min.freq = 20, random.order = F, colors = pal)
+
+#association words, to get sentiments from
+word_assoc<-findAssocs(tdm, c("tax","shutdown","china","gang","war","mexico","american","fake","wall"), 0.2)
+word_assoc
+
+# remove sparse terms
+tdm2 <- removeSparseTerms(tdm, sparse=0.95)
+m2 <- as.matrix(tdm2)        #will use m2 again for topic modeling
+
+
+#Sentiment Analysis,
+
+#take only the tweets and unnest them
+tweetsOnly<-data_frame(text=tweets45$Tweet_Text)
+#NRC
+tokens_tweets <-tweetsOnly %>%
+  unnest_tokens(word, text)
+head(tokens_tweets)
+data(stop_words)
+#remove stop words from within all 3 lexicons
+tokens_tweets <- tokens_tweets %>%
+  anti_join(stop_words)
+#most common words
+tokens_tweets %>% count(word, sort = TRUE)
+head(tokens_tweets)
+#get sentiment counts for all sentiments
+sentiments_nrc<-get_sentiments("nrc")
+DT_Sentiminet_nrc_totals <- tokens_tweets %>%
+  inner_join(sentiments_nrc, by="word") %>%
+  count(sentiment, sort=TRUE) 
+#See results for totals
+DT_Sentiminet_nrc_totals
+
+#see each word score
+all_word_sentiments <-tokens_tweets%>% 
+  inner_join(sentiments_nrc,by="word") 
+
+all_word_sentiments
+
+#filter word out associated with "fear", can change word
+all_word_sentiments %>%
+  filter(sentiment=="fear") %>%
+  group_by(word)
+
+#Get sentiment score for each tweet
+word.df <- as.vector(tweets45$Tweet_Text)
+emotion.df <- get_nrc_sentiment(word.df)
+emotion.df2 <- cbind(tweets45$Tweet_Text, emotion.df) 
+head(emotion.df2)
+
+#use the get_sentiment function to extract sentiment score for each of the tweets
+sent.value <- get_sentiment(word.df)
+most.positive <- word.df[sent.value == max(sent.value)]
+most.positive
+
+most.negative <- word.df[sent.value <= min(sent.value)] 
+most.negative 
+
+#Let us see how the score of each of the tweets has been calculated                        
+sent.value
+
+#show the first 6 positive tweets
+positive.tweets <- word.df[sent.value > 0]
+head(positive.tweets)
+
+#show the first 6 negative tweets
+negative.tweets <- word.df[sent.value < 0]
+head(negative.tweets)
+
+#show the first 6 neutral tweets
+neutral.tweets <- word.df[sent.value == 0]
+head(neutral.tweets)
+
+category_senti <- ifelse(sent.value < 0, "Negative", ifelse(sent.value > 0, "Positive", "Neutral"))
+head(category_senti)
+
+table(category_senti)
